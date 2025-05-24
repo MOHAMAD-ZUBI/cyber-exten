@@ -117,26 +117,35 @@ class ThreatDetector {
       badgeColor = '#FF9800'; // Orange for warnings
     }
 
-    try {
-      chrome.action.setBadgeText({
-        text: badgeText,
-        tabId: tabId
-      });
+    // Check if tab still exists before updating badge
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        // Tab doesn't exist anymore, clean up its threats
+        this.threats.delete(tabId);
+        return;
+      }
 
-      chrome.action.setBadgeBackgroundColor({
-        color: badgeColor,
-        tabId: tabId
-      });
-    } catch (error) {
-      console.log('Badge update failed:', error);
-    }
+      try {
+        chrome.action.setBadgeText({
+          text: badgeText,
+          tabId: tabId
+        });
+
+        chrome.action.setBadgeBackgroundColor({
+          color: badgeColor,
+          tabId: tabId
+        });
+      } catch (error) {
+        console.log('Badge update failed:', error);
+      }
+    });
   }
 
   showNotification(threat) {
     if (chrome.notifications && chrome.notifications.create) {
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'icons/icon48.png',
+        iconUrl: 'icons/icon-48.png',
         title: 'CyberGuard Alert',
         message: `${threat.type}: ${threat.description}`,
         priority: threat.severity === 'critical' ? 2 : 1

@@ -460,20 +460,6 @@ class JavaScriptMonitor {
 // Initialize the monitor
 window.cyberGuardMonitor = new JavaScriptMonitor();
 
-// Listen for messages from popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('CyberGuard: Received message:', message);
-  
-  if (message.type === 'GET_PAGE_INFO') {
-    const response = {
-      url: window.location.href,
-      title: document.title,
-      scripts: document.querySelectorAll('script').length
-    };
-    console.log('CyberGuard: Sending response:', response);
-    sendResponse(response);
-    return true;
-  }
-});
+// Listen for messages from popupchrome.runtime.onMessage.addListener((message, sender, sendResponse) => {  console.log('CyberGuard: Received message:', message);    if (message.type === 'GET_PAGE_INFO') {    // Count all script elements, including inline and external    const allScripts = document.querySelectorAll('script');    const inlineScripts = Array.from(allScripts).filter(script => !script.src && script.textContent.trim().length > 0);    const externalScripts = Array.from(allScripts).filter(script => script.src);        const response = {      url: window.location.href,      title: document.title,      scripts: allScripts.length,      details: {        total: allScripts.length,        inline: inlineScripts.length,        external: externalScripts.length      }    };    console.log('CyberGuard: Sending response:', response);    sendResponse(response);    return true;  }});
 
 console.log('CyberGuard: Content script fully initialized'); 

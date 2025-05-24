@@ -17,7 +17,14 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [    {      "matches": ["<all_urls>"],      "js": ["content.js"],      "run_at": "document_start",      "all_frames": false    }  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "CyberGuard Extension",
@@ -40,4 +47,4 @@
       "matches": ["<all_urls>"]
     }
   ]
-} 
+}

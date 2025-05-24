@@ -53,6 +53,14 @@ class PopupController {
         return;
       }
 
+      // Check if this is a restricted domain
+      if (this.isRestrictedDomain(url)) {
+        this.scriptsCount.textContent = 'N/A';
+        this.pageStatus.textContent = 'Restricted Site';
+        this.pageStatus.className = 'status-value';
+        return;
+      }
+
       // Try to communicate with content script
       try {
         const response = await chrome.tabs.sendMessage(this.currentTabId, {
@@ -61,55 +69,153 @@ class PopupController {
 
         if (response && response.scripts !== undefined) {
           this.scriptsCount.textContent = response.scripts.toString();
+          this.pageStatus.textContent = 'Active';
+          this.pageStatus.className = 'status-value status-safe';
         } else {
           this.scriptsCount.textContent = '0';
+          this.pageStatus.textContent = 'No Response';
+          this.pageStatus.className = 'status-value';
         }
         
       } catch (messageError) {
-        // Content script not available - try to inject it
         console.log('Content script not responding, trying to inject:', messageError.message);
         
-        try {
-          // Try to inject the content script programmatically
-          await chrome.scripting.executeScript({
-            target: { tabId: this.currentTabId },
-            files: ['content-test.js']
-          });
-          
-          // Wait a moment and try again
-          setTimeout(async () => {
-            try {
-              const response = await chrome.tabs.sendMessage(this.currentTabId, {
-                type: 'GET_PAGE_INFO'
-              });
-              
-              if (response && response.scripts !== undefined) {
-                this.scriptsCount.textContent = response.scripts.toString();
-                this.pageStatus.textContent = 'Safe';
-                this.pageStatus.className = 'status-value status-safe';
-              }
-            } catch (retryError) {
-              console.log('Retry failed:', retryError.message);
-              this.scriptsCount.textContent = '0';
-              this.pageStatus.textContent = 'Script Injection Failed';
-              this.pageStatus.className = 'status-value';
+        // Try multiple injection strategies
+        const injectionSuccess = await this.tryContentScriptInjection();
+        
+        if (!injectionSuccess) {
+          // Final fallback - manual script counting
+          try {
+            const scriptCountResult = await chrome.scripting.executeScript({
+              target: { tabId: this.currentTabId },
+              func: () => document.querySelectorAll('script').length
+            });
+            
+            if (scriptCountResult && scriptCountResult[0] && scriptCountResult[0].result !== undefined) {
+              this.scriptsCount.textContent = scriptCountResult[0].result.toString();
+              this.pageStatus.textContent = 'Limited Monitoring';
+              this.pageStatus.className = 'status-value status-warning';
+            } else {
+              this.handleMonitoringBlocked(url);
             }
-          }, 1000);
-          
-        } catch (injectError) {
-          console.log('Failed to inject content script:', injectError.message);
-          this.scriptsCount.textContent = '0';
-          this.pageStatus.textContent = 'Monitoring Blocked';
-          this.pageStatus.className = 'status-value';
+          } catch (fallbackError) {
+            console.log('Fallback script counting failed:', fallbackError.message);
+            this.handleMonitoringBlocked(url);
+          }
         }
       }
       
     } catch (error) {
       console.error('Failed to get page info:', error);
       this.scriptsCount.textContent = 'Unknown';
-      this.pageStatus.textContent = 'Unknown';
+      this.pageStatus.textContent = 'Error';
       this.pageStatus.className = 'status-value';
     }
+  }
+
+  async tryContentScriptInjection() {
+    try {
+      // First try: Inject content script
+      await chrome.scripting.executeScript({
+        target: { tabId: this.currentTabId },
+        files: ['content.js']
+      });
+      
+      // Wait and test communication
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const response = await chrome.tabs.sendMessage(this.currentTabId, {
+        type: 'GET_PAGE_INFO'
+      });
+      
+      if (response && response.scripts !== undefined) {
+        this.scriptsCount.textContent = response.scripts.toString();
+        this.pageStatus.textContent = 'Injected';
+        this.pageStatus.className = 'status-value status-safe';
+        return true;
+      }
+      
+      return false;
+      
+    } catch (injectError) {
+      console.log('Content script injection failed:', injectError.message);
+      
+      // Second try: Inject minimal monitoring script
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: this.currentTabId },
+          func: () => {
+            // Minimal monitoring setup
+            window.cyberGuardMinimal = {
+              scriptCount: document.querySelectorAll('script').length,
+              initialized: true
+            };
+            
+            // Simple message listener
+            chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+              if (message.type === 'GET_PAGE_INFO') {
+                sendResponse({
+                  scripts: window.cyberGuardMinimal.scriptCount,
+                  url: window.location.href,
+                  title: document.title,
+                  minimal: true
+                });
+                return true;
+              }
+            });
+          }
+        });
+        
+        // Test minimal script
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const minimalResponse = await chrome.tabs.sendMessage(this.currentTabId, {
+          type: 'GET_PAGE_INFO'
+        });
+        
+        if (minimalResponse && minimalResponse.scripts !== undefined) {
+          this.scriptsCount.textContent = minimalResponse.scripts.toString();
+          this.pageStatus.textContent = 'Minimal Mode';
+          this.pageStatus.className = 'status-value status-warning';
+          return true;
+        }
+        
+      } catch (minimalError) {
+        console.log('Minimal injection also failed:', minimalError.message);
+      }
+      
+      return false;
+    }
+  }
+
+  handleMonitoringBlocked(url) {
+    this.scriptsCount.textContent = 'Blocked';
+    
+    // Determine why monitoring is blocked
+    if (url.includes('admin') || url.includes('dashboard') || url.includes('edit')) {
+      this.pageStatus.textContent = 'Admin Panel Detected';
+    } else if (url.includes('bank') || url.includes('secure') || url.includes('payment')) {
+      this.pageStatus.textContent = 'Secure Site';
+    } else {
+      this.pageStatus.textContent = 'CSP Protected';
+    }
+    
+    this.pageStatus.className = 'status-value';
+    
+    // Show explanation in threats container
+    this.threatsContainer.innerHTML = `
+      <div class="no-threats">
+        <div class="icon">🔒</div>
+        <div style="font-weight: bold;">Monitoring Blocked</div>
+        <div style="font-size: 12px; margin-top: 8px; opacity: 0.8;">
+          This website has security measures that prevent content script injection.
+          This is common on admin panels, secure sites, and sites with strict CSP.
+        </div>
+        <div style="font-size: 11px; margin-top: 8px; opacity: 0.6;">
+          URL: ${url.substring(0, 50)}...
+        </div>
+      </div>
+    `;
   }
 
   isSystemPage(url) {
@@ -129,6 +235,30 @@ class PopupController {
     return systemPrefixes.some(prefix => url.startsWith(prefix));
   }
 
+  isRestrictedDomain(url) {
+    if (!url) return false;
+    
+    // Common domains that often block content scripts
+    const restrictedPatterns = [
+      'chrome.google.com',
+      'chromewebstore.google.com',
+      'addons.mozilla.org',
+      'microsoftedge.microsoft.com',
+      // Banking and financial
+      'bank',
+      'paypal',
+      'stripe',
+      // Developer tools and admin
+      'github.com/settings',
+      'gitlab.com/admin',
+      // Google services
+      'accounts.google.com',
+      'myaccount.google.com'
+    ];
+    
+    return restrictedPatterns.some(pattern => url.includes(pattern));
+  }
+
   async loadThreats() {
     try {
       const response = await chrome.runtime.sendMessage({
@@ -141,11 +271,19 @@ class PopupController {
       this.updatePageStatus(threats);
     } catch (error) {
       console.error('Failed to load threats:', error);
+      // Don't show error if threats container already has monitoring blocked message
+      if (!this.threatsContainer.innerHTML.includes('Monitoring Blocked')) {
       this.showError('Failed to load threat data');
+      }
     }
   }
 
   displayThreats(threats) {
+    // Don't overwrite monitoring blocked message
+    if (this.threatsContainer.innerHTML.includes('Monitoring Blocked')) {
+      return;
+    }
+
     this.threatsContainer.innerHTML = '';
 
     if (threats.length === 0) {
@@ -216,6 +354,14 @@ class PopupController {
   }
 
   updatePageStatus(threats) {
+    // Don't override status if monitoring is blocked
+    if (this.pageStatus.textContent.includes('Blocked') || 
+        this.pageStatus.textContent.includes('Admin') ||
+        this.pageStatus.textContent.includes('CSP') ||
+        this.pageStatus.textContent.includes('Secure')) {
+      return;
+    }
+
     if (threats.length === 0) {
       this.pageStatus.textContent = 'Safe';
       this.pageStatus.className = 'status-value status-safe';
